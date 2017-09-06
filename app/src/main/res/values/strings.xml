@@ -16,4 +16,6 @@
 -->
 <resources>
     <string name="app_name">AR-IMU Recorder</string>
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
 </resources>

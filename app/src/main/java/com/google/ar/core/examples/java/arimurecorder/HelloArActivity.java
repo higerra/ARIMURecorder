@@ -31,22 +31,29 @@ import com.google.ar.core.examples.java.arimurecorder.rendering.PlaneAttachment;
 import com.google.ar.core.examples.java.arimurecorder.rendering.PlaneRenderer;
 import com.google.ar.core.examples.java.arimurecorder.rendering.PointCloudRenderer;
 
+import android.graphics.Camera;
+import android.icu.util.Output;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
 import android.support.design.widget.Snackbar;
+import android.support.v4.view.animation.FastOutLinearInInterpolator;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.Toast;
 
+import java.io.BufferedInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -73,6 +80,11 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
     private PlaneRenderer mPlaneRenderer = new PlaneRenderer();
     private PointCloudRenderer mPointCloud = new PointCloudRenderer();
 
+    private OutputDirectoryManager mOutputDirectoryManager;
+    private PoseIMURecorder mPoseIMURecorder;
+
+    private Button mStartStopButton;
+
     // Temporary matrix allocated here to reduce number of allocations for each frame.
     private final float[] mAnchorMatrix = new float[16];
 
@@ -80,14 +92,17 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
     private ArrayBlockingQueue<MotionEvent> mQueuedSingleTaps = new ArrayBlockingQueue<>(16);
     private ArrayList<PlaneAttachment> mTouches = new ArrayList<>();
 
+    // Boolean variable indicating whether the data should be streamed
+    private AtomicBoolean mIsStreaming = new AtomicBoolean(false);
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         mSurfaceView = (GLSurfaceView) findViewById(R.id.surfaceview);
+        mStartStopButton = (Button) findViewById(R.id.btn_start_top);
 
         mSession = new Session(/*context=*/this);
-
         // Create default config, check is supported, create session from that config.
         mDefaultConfig = Config.createDefaultConfig();
         if (!mSession.isSupported(mDefaultConfig)) {
@@ -131,13 +146,17 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
 
         // ARCore requires camera permissions to operate. If we did not yet obtain runtime
         // permission on Android M and above, now is a good time to ask the user for it.
-        if (CameraPermissionHelper.hasCameraPermission(this)) {
+        Boolean camera_permission = CameraPermissionHelper.hasCameraPermission(this);
+        Boolean storage_permission = StoragePermissionHelper.hasWriteExternalStoragePermission(this);
+        if (camera_permission && storage_permission) {
             showLoadingMessage();
             // Note that order matters - see the note in onPause(), the reverse applies here.
             mSession.resume(mDefaultConfig);
             mSurfaceView.onResume();
-        } else {
+        } else if (!camera_permission){
             CameraPermissionHelper.requestCameraPermission(this);
+        }else if (!storage_permission){
+            StoragePermissionHelper.requestWriteExternalStoragePermission(this);
         }
     }
 
@@ -158,6 +177,12 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
                 "Camera permission is needed to run this application", Toast.LENGTH_LONG).show();
             finish();
         }
+        if (!StoragePermissionHelper.hasWriteExternalStoragePermission(this)){
+            Toast.makeText(this,
+                    "External storage writting permission is needed to run this application",
+                    Toast.LENGTH_LONG).show();
+            finish();
+        }
     }
 
     @Override
@@ -176,6 +201,28 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
         }
     }
 
+    public void onStartStopPressed(View view) {
+        if (mIsStreaming.get()){
+            mStartStopButton.setText(R.string.start);
+            mIsStreaming.set(false);
+            if (mPoseIMURecorder != null){
+                mPoseIMURecorder.endFiles();
+            }
+            showToast("Streaming stopped");
+        }else{
+            try{
+                mOutputDirectoryManager = new OutputDirectoryManager("AR");
+                mPoseIMURecorder = new PoseIMURecorder(mOutputDirectoryManager.getOutputDirectory(), this);
+            }catch (FileNotFoundException e){
+                e.printStackTrace();
+                showToast("Can not create output folder");
+                return;
+            }
+            mStartStopButton.setText(R.string.stop);
+            mIsStreaming.set(true);
+            showToast("Streaming started");
+        }
+    }
     private void onSingleTap(MotionEvent e) {
         // Queue tap if there is space. Tap is lost if queue is full.
         mQueuedSingleTaps.offer(e);
@@ -266,12 +313,15 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
             float[] projmtx = new float[16];
             mSession.getProjectionMatrix(projmtx, 0, 0.1f, 100.0f);
 
-            Pose camera_pose = frame.getPose();
-            float[] camera_rotation = new float[4];
-            camera_pose.getRotationQuaternion(camera_rotation, 0);
-            float[] camera_translation = new float[3];
-            camera_pose.getTranslation(camera_translation, 0);
-            long timestamp = frame.getTimestampNs();
+            if (mIsStreaming.get()) {
+                Pose camera_pose = frame.getPose();
+                float[] camera_rotation = new float[4];
+                camera_pose.getRotationQuaternion(camera_rotation, 0);
+                float[] camera_translation = new float[3];
+                camera_pose.getTranslation(camera_translation, 0);
+                long timestamp = frame.getTimestampNs();
+                mPoseIMURecorder.addPoseRecord(timestamp, camera_rotation, camera_translation);
+            }
 
             // Get camera matrix and draw.
             float[] viewmtx = new float[16];
@@ -341,6 +391,15 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
             public void run() {
                 mLoadingMessageSnackbar.dismiss();
                 mLoadingMessageSnackbar = null;
+            }
+        });
+    }
+
+    private void showToast(final String text) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                Toast.makeText(HelloArActivity.this, text, Toast.LENGTH_SHORT).show();
             }
         });
     }
