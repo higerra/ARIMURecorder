@@ -84,6 +84,7 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
     private PoseIMURecorder mPoseIMURecorder;
 
     private Button mStartStopButton;
+    private Button mQuitButton;
 
     // Temporary matrix allocated here to reduce number of allocations for each frame.
     private final float[] mAnchorMatrix = new float[16];
@@ -101,6 +102,7 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
         setContentView(R.layout.activity_main);
         mSurfaceView = (GLSurfaceView) findViewById(R.id.surfaceview);
         mStartStopButton = (Button) findViewById(R.id.btn_start_top);
+        mQuitButton = (Button) findViewById(R.id.btn_quit);
 
         mSession = new Session(/*context=*/this);
         // Create default config, check is supported, create session from that config.
@@ -118,7 +120,6 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
                 onSingleTap(e);
                 return true;
             }
-
             @Override
             public boolean onDown(MotionEvent e) {
                 return true;
@@ -209,6 +210,7 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
                 mPoseIMURecorder.endFiles();
             }
             showToast("Streaming stopped");
+            mQuitButton.setEnabled(true);
         }else{
             try{
                 mOutputDirectoryManager = new OutputDirectoryManager("AR");
@@ -221,13 +223,17 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
             mStartStopButton.setText(R.string.stop);
             mIsStreaming.set(true);
             showToast("Streaming started");
+            mQuitButton.setEnabled(false);
         }
+    }
+
+    public void onQuitPressed(View view){
+        this.finishAffinity();
     }
     private void onSingleTap(MotionEvent e) {
         // Queue tap if there is space. Tap is lost if queue is full.
         mQueuedSingleTaps.offer(e);
     }
-
     @Override
     public void onSurfaceCreated(GL10 gl, EGLConfig config) {
         GLES20.glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
