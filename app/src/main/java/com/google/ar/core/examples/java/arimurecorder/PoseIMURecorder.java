@@ -133,8 +133,9 @@ public class PoseIMURecorder {
 
     public Boolean addPoseRecord(long timestamp, float[] rotation, float[] translation){
         try {
+            Log.i(LOG_TAG, String.valueOf(timestamp));
             file_writers_[AR_POSE].write(String.format(Locale.US,
-                    "%d %.6f %.6f %.6f %.6f %.6f %.6f %.6f\n", (long)(timestamp * mulNanoToSec),
+                    "%d %.6f %.6f %.6f %.6f %.6f %.6f %.6f\n", timestamp,
                     translation[0], translation[1], translation[2],
                     rotation[0], rotation[1], rotation[2], rotation[3]));
         }catch (IOException e){

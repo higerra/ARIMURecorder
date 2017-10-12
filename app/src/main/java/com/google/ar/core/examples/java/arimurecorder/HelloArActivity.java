@@ -36,6 +36,8 @@ import android.icu.util.Output;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.support.design.widget.Snackbar;
 import android.support.v4.view.animation.FastOutLinearInInterpolator;
 import android.support.v7.app.AppCompatActivity;
@@ -45,13 +47,20 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.TextView;
 import android.widget.Toast;
+
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorManager;
+import android.hardware.SensorEventListener;
 
 import java.io.BufferedInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -63,7 +72,7 @@ import javax.microedition.khronos.opengles.GL10;
  * the ARCore API. The application will display any detected planes and will allow the user to
  * tap on a plane to place a 3d model of the Android robot.
  */
-public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.Renderer {
+public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.Renderer, SensorEventListener {
     private static final String TAG = HelloArActivity.class.getSimpleName();
 
     // Rendering. The Renderers are created here, and initialized when the GL surface is created.
@@ -85,6 +94,37 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
 
     private Button mStartStopButton;
     private Button mQuitButton;
+
+    private SensorManager mSensorManager;
+    private Sensor mAccelerometer;
+    private Sensor mGyroscope;
+    private Sensor mGravity;
+    private Sensor mLinearAcce;
+    private Sensor mOrientation;
+    private Sensor mMagnetometer;
+
+    // Gyroscope
+    private TextView mLabelRx;
+    private TextView mLabelRy;
+    private TextView mLabelRz;
+    // Accelerometer
+    private TextView mLabelAx;
+    private TextView mLabelAy;
+    private TextView mLabelAz;
+    // Linear acceleration
+    private TextView mLabelLx;
+    private TextView mLabelLy;
+    private TextView mLabelLz;
+    // Gravity
+    private TextView mLabelGx;
+    private TextView mLabelGy;
+    private TextView mLabelGz;
+    // Magnetometer
+    private TextView mLabelMx;
+    private TextView mLabelMy;
+    private TextView mLabelMz;
+
+    private Handler mUIHandler = new Handler(Looper.getMainLooper());
 
     // Temporary matrix allocated here to reduce number of allocations for each frame.
     private final float[] mAnchorMatrix = new float[16];
@@ -133,6 +173,31 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
             }
         });
 
+        // Set up sensors
+        mSensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
+        mAccelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        mGyroscope = mSensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+        mGravity = mSensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
+        mLinearAcce = mSensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
+        mOrientation = mSensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
+        mMagnetometer = mSensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+
+        mLabelRx = (TextView)findViewById(R.id.label_rx);
+        mLabelRy = (TextView)findViewById(R.id.label_ry);
+        mLabelRz = (TextView)findViewById(R.id.label_rz);
+        mLabelAx = (TextView)findViewById(R.id.label_ax);
+        mLabelAy = (TextView)findViewById(R.id.label_ay);
+        mLabelAz = (TextView)findViewById(R.id.label_az);
+        mLabelLx = (TextView)findViewById(R.id.label_lx);
+        mLabelLy = (TextView)findViewById(R.id.label_ly);
+        mLabelLz = (TextView)findViewById(R.id.label_lz);
+        mLabelGx = (TextView)findViewById(R.id.label_gx);
+        mLabelGy = (TextView)findViewById(R.id.label_gy);
+        mLabelGz = (TextView)findViewById(R.id.label_gz);
+        mLabelMx = (TextView) findViewById(R.id.label_mx);
+        mLabelMy = (TextView) findViewById(R.id.label_my);
+        mLabelMz = (TextView) findViewById(R.id.label_mz);
+
         // Set up renderer.
         mSurfaceView.setPreserveEGLContextOnPause(true);
         mSurfaceView.setEGLContextClientVersion(2);
@@ -144,6 +209,13 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
     @Override
     protected void onResume() {
         super.onResume();
+
+        mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_FASTEST);
+        mSensorManager.registerListener(this, mGyroscope, SensorManager.SENSOR_DELAY_FASTEST);
+        mSensorManager.registerListener(this, mGravity, SensorManager.SENSOR_DELAY_FASTEST);
+        mSensorManager.registerListener(this, mLinearAcce, SensorManager.SENSOR_DELAY_FASTEST);
+        mSensorManager.registerListener(this, mOrientation, SensorManager.SENSOR_DELAY_FASTEST);
+        mSensorManager.registerListener(this, mMagnetometer, SensorManager.SENSOR_DELAY_FASTEST);
 
         // ARCore requires camera permissions to operate. If we did not yet obtain runtime
         // permission on Android M and above, now is a good time to ask the user for it.
@@ -164,6 +236,14 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
     @Override
     public void onPause() {
         super.onPause();
+        stopRecording();
+        mSensorManager.unregisterListener(this, mAccelerometer);
+        mSensorManager.unregisterListener(this, mGyroscope);
+        mSensorManager.unregisterListener(this, mGravity);
+        mSensorManager.unregisterListener(this, mLinearAcce);
+        mSensorManager.unregisterListener(this, mOrientation);
+        mSensorManager.unregisterListener(this, mMagnetometer);
+
         // Note that the order matters - GLSurfaceView is paused first so that it does not try
         // to query the session. If Session is paused before GLSurfaceView, GLSurfaceView may
         // still call mSession.update() and get a SessionPausedException.
@@ -202,28 +282,36 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
         }
     }
 
+    private void startRecording(){
+        try{
+            mOutputDirectoryManager = new OutputDirectoryManager("AR");
+            mPoseIMURecorder = new PoseIMURecorder(mOutputDirectoryManager.getOutputDirectory(), this);
+        }catch (FileNotFoundException e){
+            e.printStackTrace();
+            showToast("Can not create output folder");
+            return;
+        }
+        mStartStopButton.setText(R.string.stop);
+        mIsStreaming.set(true);
+        showToast("Streaming started");
+        mQuitButton.setEnabled(false);
+    }
+
+    private void stopRecording(){
+        mStartStopButton.setText(R.string.start);
+        mIsStreaming.set(false);
+        if (mPoseIMURecorder != null){
+            mPoseIMURecorder.endFiles();
+        }
+        showToast("Streaming stopped");
+        mQuitButton.setEnabled(true);
+    }
+
     public void onStartStopPressed(View view) {
         if (mIsStreaming.get()){
-            mStartStopButton.setText(R.string.start);
-            mIsStreaming.set(false);
-            if (mPoseIMURecorder != null){
-                mPoseIMURecorder.endFiles();
-            }
-            showToast("Streaming stopped");
-            mQuitButton.setEnabled(true);
+            stopRecording();
         }else{
-            try{
-                mOutputDirectoryManager = new OutputDirectoryManager("AR");
-                mPoseIMURecorder = new PoseIMURecorder(mOutputDirectoryManager.getOutputDirectory(), this);
-            }catch (FileNotFoundException e){
-                e.printStackTrace();
-                showToast("Can not create output folder");
-                return;
-            }
-            mStartStopButton.setText(R.string.stop);
-            mIsStreaming.set(true);
-            showToast("Streaming started");
-            mQuitButton.setEnabled(false);
+            startRecording();
         }
     }
 
@@ -375,6 +463,90 @@ public class HelloArActivity extends AppCompatActivity implements GLSurfaceView.
         } catch (Throwable t) {
             // Avoid crashing the application due to unhandled exceptions.
             Log.e(TAG, "Exception on the OpenGL thread", t);
+        }
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy){
+
+    }
+
+    @Override
+    public void onSensorChanged(final SensorEvent event){
+        long time = event.timestamp;
+        float[] values = {0.0f, 0.0f, 0.0f, 0.0f};
+        if(event.sensor.getType() == Sensor.TYPE_ACCELEROMETER){
+//            mUIHandler.post(new Runnable() {
+//                @Override
+//                public void run() {
+//                    mLabelAx.setText(String.format(Locale.US, "%.6f", event.values[0]));
+//                    mLabelAy.setText(String.format(Locale.US, "%.6f", event.values[1]));
+//                    mLabelAz.setText(String.format(Locale.US, "%.6f", event.values[2]));
+//                }
+//            });
+            if(mIsStreaming.get()){
+                System.arraycopy(event.values, 0, values, 0, 3);
+                mPoseIMURecorder.addIMURecord(time, values, PoseIMURecorder.ACCELEROMETER);
+            }
+        }else if(event.sensor.getType() == Sensor.TYPE_GYROSCOPE){
+//            mUIHandler.post(new Runnable() {
+//                @Override
+//                public void run() {
+//                    mLabelRx.setText(String.format(Locale.US, "%.6f", event.values[0]));
+//                    mLabelRy.setText(String.format(Locale.US, "%.6f", event.values[1]));
+//                    mLabelRz.setText(String.format(Locale.US, "%.6f", event.values[2]));
+//                }
+//            });
+            if(mIsStreaming.get()){
+                System.arraycopy(event.values, 0, values, 0, 3);
+                mPoseIMURecorder.addIMURecord(time, values, PoseIMURecorder.GYROSCOPE);
+            }
+        }
+        else if(event.sensor.getType() == Sensor.TYPE_LINEAR_ACCELERATION){
+//            mUIHandler.post(new Runnable() {
+//                @Override
+//                public void run() {
+//                    mLabelLx.setText(String.format(Locale.US, "%.6f", event.values[0]));
+//                    mLabelLy.setText(String.format(Locale.US, "%.6f", event.values[1]));
+//                    mLabelLz.setText(String.format(Locale.US, "%.6f", event.values[2]));
+//                }
+//            });
+            if(mIsStreaming.get()){
+                System.arraycopy(event.values, 0, values, 0, 3);
+                mPoseIMURecorder.addIMURecord(time, values, PoseIMURecorder.LINEAR_ACCELERATION);
+            }
+        }else if(event.sensor.getType() == Sensor.TYPE_GRAVITY){
+//            mUIHandler.post(new Runnable() {
+//                @Override
+//                public void run() {
+//                    mLabelGx.setText(String.format(Locale.US, "%.6f", event.values[0]));
+//                    mLabelGy.setText(String.format(Locale.US, "%.6f", event.values[1]));
+//                    mLabelGz.setText(String.format(Locale.US, "%.6f", event.values[2]));
+//                }
+//            });
+            if(mIsStreaming.get()){
+                System.arraycopy(event.values, 0, values, 0, 3);
+                mPoseIMURecorder.addIMURecord(time, values, PoseIMURecorder.GRAVITY);
+            }
+        }else if(event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD){
+//            mUIHandler.post(new Runnable() {
+//                @Override
+//                public void run() {
+//                    mLabelMx.setText(String.format(Locale.US, "%.6f", event.values[0]));
+//                    mLabelMy.setText(String.format(Locale.US, "%.6f", event.values[1]));
+//                    mLabelMz.setText(String.format(Locale.US, "%.6f", event.values[2]));
+//                }
+//            });
+            if(mIsStreaming.get()){
+                System.arraycopy(event.values, 0, values, 0, 3);
+                mPoseIMURecorder.addIMURecord(time, values, PoseIMURecorder.MAGNETOMETER);
+            }
+        }
+        else if(event.sensor.getType() == Sensor.TYPE_GAME_ROTATION_VECTOR){
+            if(mIsStreaming.get()){
+                System.arraycopy(event.values, 0, values, 0, 4);
+                mPoseIMURecorder.addIMURecord(time, values, PoseIMURecorder.ROTATION_VECTOR);
+            }
         }
     }
 
